@@ -21,17 +21,48 @@ People save YouTube playlists ("100 Days of Code," a full ML course, a lecture s
 | Monorepo | Turborepo + pnpm workspaces |
 | Framework | Next.js (TypeScript) in `apps/web` |
 | UI | shadcn/ui shared component library in `packages/ui` |
-| Database | Postgres (Neon) with Drizzle ORM *(planned)* |
-| Auth | Auth.js — Google OAuth + email magic link *(planned)* |
-| Video metadata | YouTube Data API v3, server-side with caching *(planned)* |
-| Email | Resend / Postmark transactional emails *(planned)* |
-| Scheduling | Vercel Cron — streak evaluation + reminders *(planned)* |
+| Database | Postgres with Drizzle ORM (Neon-ready) |
+| Auth | Auth.js v5 — email/password + Google OAuth |
+| Video metadata | YouTube Data API v3, server-side with 24h caching |
+| Email | Resend transactional emails |
+| Scheduling | Vercel Cron — streak evaluation + reminders |
 
 ## Getting Started
 
+Prerequisites: Node 20+, pnpm 10, and a local Postgres (e.g. `brew install postgresql@16`).
+
 ```bash
+# 1. Install dependencies
 pnpm install
+
+# 2. Create the local database
+createdb peakstreak
+
+# 3. Configure environment
+cp .env.example apps/web/.env.local
+# then edit apps/web/.env.local:
+#   DATABASE_URL=postgresql://localhost:5432/peakstreak
+#   AUTH_SECRET=$(openssl rand -base64 32)
+#   YOUTUBE_API_KEY=<your key from Google Cloud Console>
+# GOOGLE_CLIENT_ID/SECRET are optional locally (the Google button hides
+# without them); RESEND_API_KEY is optional (emails log to the console).
+
+# 4. Apply database migrations
+pnpm --filter web db:migrate
+
+# 5. Run the app
 pnpm dev
+```
+
+Visit `http://localhost:3000`. Verify the setup at `http://localhost:3000/api/health` — it should return `{"status":"ok","database":"connected"}`.
+
+Other useful commands (run from the repo root):
+
+```bash
+pnpm --filter web test         # unit tests (pace math, streaks, dates, URL parsing)
+pnpm --filter web db:generate  # generate a migration after editing lib/db/schema.ts
+pnpm --filter web db:studio    # browse the database in Drizzle Studio
+pnpm typecheck                 # typecheck all workspaces
 ```
 
 The web app lives in `apps/web`. To add shadcn/ui components, run from the repo root:
@@ -56,4 +87,6 @@ import { Button } from "@workspace/ui/components/button";
 
 ## Status
 
-Early setup phase — the monorepo scaffold is in place; core features are being built ticket-by-ticket per [TICKETS.md](TICKETS.md).
+All v1 tickets (PS-1 through PS-14) are implemented: auth, playlist ingestion with quota-safe caching, pace estimates, dashboard with streaks and an activity heatmap, the watch view with genuine watch-time tracking, autosaving notes with export, the completion celebration, timezone-aware reminder emails on an hourly cron, the public landing funnel, and self-hosted analytics. 79 unit/integration tests cover the streak, pace, timezone, progress, and reminder logic (`pnpm --filter web test`).
+
+To go live you still need real credentials in production env: a YouTube Data API key, Google OAuth client, Resend key with domain DNS (SPF/DKIM/DMARC), a Postgres URL, and `CRON_SECRET` matching the Vercel cron config in `apps/web/vercel.json`.

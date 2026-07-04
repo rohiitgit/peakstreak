@@ -9,24 +9,42 @@
     "start": "next start",
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@auth/drizzle-adapter": "^1.11.2",
+    "@react-email/components": "^1.0.12",
     "@workspace/ui": "workspace:*",
+    "bcryptjs": "^3.0.3",
+    "drizzle-orm": "^0.45.2",
     "lucide-react": "^1.23.0",
     "next": "16.2.6",
+    "next-auth": "5.0.0-beta.31",
     "next-themes": "^0.4.6",
+    "pg": "^8.22.0",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "resend": "^6.17.1",
+    "sonner": "^2.0.7",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@workspace/eslint-config": "workspace:^",
     "@workspace/typescript-config": "workspace:*",
+    "dotenv": "^17.4.2",
+    "drizzle-kit": "^0.31.10",
     "eslint": "^9",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.9"
   }
 }
