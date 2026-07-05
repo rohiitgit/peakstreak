@@ -8,6 +8,7 @@ import {
 } from "@/lib/youtube/client"
 import { getOrSyncPlaylist } from "@/lib/youtube/cache"
 import { parsePlaylistInput } from "@/lib/youtube/url"
+import { checkRateLimit, clientIp } from "@/lib/rate-limit"
 
 const bodySchema = z.object({ url: z.string().min(1) })
 
@@ -16,6 +17,21 @@ const bodySchema = z.object({ url: z.string().min(1) })
  * estimate screen and, later, the anonymous landing-page teaser (PS-13).
  */
 export async function POST(request: Request) {
+  // This is an unauthenticated endpoint that spends YouTube API quota on a
+  // cache miss — throttle per IP before touching anything else.
+  const { ok } = await checkRateLimit({
+    name: "preview-ip",
+    identifier: await clientIp(),
+    limit: 20,
+    window: "1 m",
+  })
+  if (!ok) {
+    return Response.json(
+      { error: "rate_limited", message: "You're going a bit fast. Please try again in a minute." },
+      { status: 429 },
+    )
+  }
+
   let body: unknown
   try {
     body = await request.json()

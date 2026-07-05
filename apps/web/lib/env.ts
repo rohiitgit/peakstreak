@@ -23,6 +23,12 @@ const envSchema = z.object({
   // feedback is still stored in the DB, just not emailed.
   FEEDBACK_EMAIL: z.string().email().optional(),
   CRON_SECRET: z.string().optional(),
+
+  // Upstash Redis (REST) backs rate limiting. Both optional — without them,
+  // rate limiting fails open (allows everything), same feature-gating pattern
+  // as Google OAuth. Use the REST URL/TOKEN, NOT the redis:// connection string.
+  UPSTASH_REDIS_REST_URL: z.string().url().optional(),
+  UPSTASH_REDIS_REST_TOKEN: z.string().optional(),
 })
 
 export type Env = z.infer<typeof envSchema>
@@ -49,4 +55,9 @@ export function env(): Env {
 export function googleOAuthEnabled(): boolean {
   const e = env()
   return Boolean(e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET)
+}
+
+export function rateLimitEnabled(): boolean {
+  const e = env()
+  return Boolean(e.UPSTASH_REDIS_REST_URL && e.UPSTASH_REDIS_REST_TOKEN)
 }

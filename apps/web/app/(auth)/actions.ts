@@ -9,6 +9,7 @@ import { track } from "@/lib/analytics"
 import { signIn, signOut } from "@/lib/auth"
 import { requestPasswordReset, resetPassword } from "@/lib/auth/password-reset"
 import { db, schema } from "@/lib/db"
+import { checkRateLimits, clientIp } from "@/lib/rate-limit"
 import { ensureUserDefaults, normalizeTimezone } from "@/lib/user"
 
 export type AuthFormState = { error?: string }
@@ -77,11 +78,24 @@ export async function loginAction(
   _prev: AuthFormState,
   formData: FormData,
 ): Promise<AuthFormState> {
+  const email = String(formData.get("email") ?? "")
+    .toLowerCase()
+    .trim()
+
+  // Throttle both the account (brute-force one email) and the source IP
+  // (spray many emails from one host). Either tripping stops the attempt.
+  const ip = await clientIp()
+  const { ok } = await checkRateLimits([
+    { name: "login-email", identifier: email || "unknown", limit: 6, window: "15 m" },
+    { name: "login-ip", identifier: ip, limit: 20, window: "15 m" },
+  ])
+  if (!ok) {
+    return { error: "Too many sign-in attempts. Please wait a few minutes and try again." }
+  }
+
   try {
     await signIn("credentials", {
-      email: String(formData.get("email") ?? "")
-        .toLowerCase()
-        .trim(),
+      email,
       password: String(formData.get("password") ?? ""),
       redirectTo: safeCallbackUrl(formData.get("callbackUrl")),
     })
@@ -102,9 +116,19 @@ export async function requestPasswordResetAction(
   if (!email.success) {
     return { error: "Enter a valid email address" }
   }
-  // Fire-and-confirm: the response is identical whether or not the account
-  // exists, so the form can't be used to probe which emails are registered.
-  await requestPasswordReset(email.data)
+
+  // Throttle to stop email-bombing an address and burning Resend quota. When
+  // limited we skip the send but STILL return the neutral "sent" response —
+  // the whole point of this flow is that its answer never varies, so it can't
+  // be probed for which emails exist (or which are being throttled).
+  const ip = await clientIp()
+  const { ok } = await checkRateLimits([
+    { name: "pwreset-email", identifier: email.data, limit: 3, window: "1 h" },
+    { name: "pwreset-ip", identifier: ip, limit: 10, window: "1 h" },
+  ])
+  if (ok) {
+    await requestPasswordReset(email.data)
+  }
   return { sent: true }
 }
 

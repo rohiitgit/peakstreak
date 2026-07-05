@@ -5,6 +5,7 @@ import { z } from "zod"
 import { currentUserId } from "@/lib/auth"
 import { track } from "@/lib/analytics"
 import { submitFeedback } from "@/lib/feedback"
+import { checkRateLimit, clientIp } from "@/lib/rate-limit"
 
 export type FeedbackState = { error?: string; sent?: boolean }
 
@@ -32,6 +33,17 @@ export async function submitFeedbackAction(
   })
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid input" }
+  }
+
+  const ip = await clientIp()
+  const { ok } = await checkRateLimit({
+    name: "feedback-ip",
+    identifier: ip,
+    limit: 6,
+    window: "1 h",
+  })
+  if (!ok) {
+    return { error: "You've sent a lot of feedback just now — please try again later." }
   }
 
   const userId = await currentUserId()
