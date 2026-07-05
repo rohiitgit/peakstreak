@@ -6,14 +6,40 @@ import { ArrowRight, CalendarDays, Clock, ListVideo } from "lucide-react"
 
 import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@workspace/ui/components/accordion"
 
 import { estimateDays, finishDate, formatDuration } from "@/lib/pace"
 
 interface Teaser {
+  youtubePlaylistId: string
   title: string
   channelTitle: string | null
   videoCount: number
   totalDurationSeconds: number
+  unavailableCount: number
+}
+
+// Speeds shown in the "Full breakdown" panel (1x is the headline runtime).
+const SPEEDS = [1.25, 1.5, 1.75, 2] as const
+
+/** "1 day, 1 hour, 58 minutes, 58 seconds" — omits zero units. */
+function formatVerbose(totalSeconds: number): string {
+  const s = Math.max(0, Math.round(totalSeconds))
+  const units: [number, string][] = [
+    [Math.floor(s / 86400), "day"],
+    [Math.floor((s % 86400) / 3600), "hour"],
+    [Math.floor((s % 3600) / 60), "minute"],
+    [s % 60, "second"],
+  ]
+  const parts = units
+    .filter(([n]) => n > 0)
+    .map(([n, unit]) => `${n} ${unit}${n === 1 ? "" : "s"}`)
+  return parts.length ? parts.join(", ") : "0 seconds"
 }
 
 function localToday(): string {
@@ -126,8 +152,56 @@ export function LandingPaste() {
             Start tracking it — free
             <ArrowRight className="size-4" />
           </Button>
+
+          <Accordion className="mt-1" multiple={false}>
+            <AccordionItem value="breakdown" className="border-b-0">
+              <AccordionTrigger className="text-muted-foreground hover:text-foreground py-3 text-xs">
+                Full breakdown
+              </AccordionTrigger>
+              <AccordionContent className="pb-1">
+                <dl className="grid gap-1.5 text-xs">
+                  <DetailRow label="ID" value={teaser.youtubePlaylistId} mono />
+                  {teaser.channelTitle && (
+                    <DetailRow label="Creator" value={teaser.channelTitle} />
+                  )}
+                  <DetailRow
+                    label="Video count"
+                    value={
+                      teaser.unavailableCount > 0
+                        ? `${teaser.videoCount} · ${teaser.unavailableCount} unavailable`
+                        : `${teaser.videoCount}`
+                    }
+                  />
+                  <DetailRow
+                    label="Average video"
+                    value={formatVerbose(teaser.totalDurationSeconds / teaser.videoCount)}
+                  />
+                  <DetailRow
+                    label="Total length"
+                    value={formatVerbose(teaser.totalDurationSeconds)}
+                  />
+                  {SPEEDS.map((speed) => (
+                    <DetailRow
+                      key={speed}
+                      label={`At ${speed}×`}
+                      value={formatVerbose(teaser.totalDurationSeconds / speed)}
+                    />
+                  ))}
+                </dl>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
         </div>
       )}
+    </div>
+  )
+}
+
+function DetailRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex justify-between gap-4">
+      <dt className="text-muted-foreground shrink-0">{label}</dt>
+      <dd className={`text-foreground text-right break-all ${mono ? "font-mono" : ""}`}>{value}</dd>
     </div>
   )
 }
