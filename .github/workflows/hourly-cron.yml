@@ -1,0 +1,25 @@
+# Vercel's Hobby plan only allows once-per-day crons, but the reminder
+# system needs an hourly tick (each user gets their email at their own
+# local hour). GitHub Actions fills the gap: this workflow calls the
+# cron endpoint every hour. The endpoint is idempotent, so overlap with
+# the daily Vercel cron (a safety net in apps/web/vercel.json) is harmless.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   CRON_URL     e.g. https://your-app.vercel.app/api/cron/hourly
+#   CRON_SECRET  the same value as the CRON_SECRET env var on Vercel
+name: Hourly cron
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch: {} # manual "Run workflow" button for testing
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Invoke /api/cron/hourly
+        run: |
+          curl --fail-with-body --silent --show-error --max-time 290 \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.CRON_URL }}"
