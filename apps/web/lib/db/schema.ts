@@ -109,6 +109,8 @@ export const playlists = pgTable("playlists", {
   videoCount: integer("video_count").notNull().default(0),
   totalDurationSeconds: integer("total_duration_seconds").notNull().default(0),
   unavailableCount: integer("unavailable_count").notNull().default(0),
+  // Videos whose owner disabled embedding — playable only on YouTube.
+  unembeddableCount: integer("unembeddable_count").notNull().default(0),
   lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }).notNull().defaultNow(),
   syncStatus: text("sync_status", { enum: ["ok", "partial", "failed"] })
     .notNull()
@@ -123,6 +125,8 @@ export const videos = pgTable("videos", {
   durationSeconds: integer("duration_seconds").notNull().default(0),
   thumbnailUrl: text("thumbnail_url"),
   isAvailable: boolean("is_available").notNull().default(true),
+  // False when the owner disabled embedding (YouTube status.embeddable).
+  isEmbeddable: boolean("is_embeddable").notNull().default(true),
   ...timestamps,
 })
 

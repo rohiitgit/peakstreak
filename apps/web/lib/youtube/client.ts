@@ -28,6 +28,8 @@ export interface FetchedVideo {
   durationSeconds: number
   thumbnailUrl: string | null
   position: number
+  /** False when the owner disabled embedding — playable only on YouTube. */
+  isEmbeddable: boolean
 }
 
 export interface FetchedPlaylist {
@@ -156,13 +158,13 @@ export async function fetchPlaylistFromYouTube(playlistId: string): Promise<Fetc
   // Private/deleted/region-blocked videos are simply absent from the response.
   const available = new Map<
     string,
-    { title: string; durationSeconds: number; thumbnailUrl: string | null }
+    { title: string; durationSeconds: number; thumbnailUrl: string | null; isEmbeddable: boolean }
   >()
   for (let i = 0; i < items.length; i += 50) {
     const batch = items.slice(i, i + 50)
     apiCallCount++
     const videoData = (await ytFetch("videos", {
-      part: "snippet,contentDetails",
+      part: "snippet,contentDetails,status",
       id: batch.map((b) => b.videoId).join(","),
       maxResults: "50",
     })) as {
@@ -170,6 +172,7 @@ export async function fetchPlaylistFromYouTube(playlistId: string): Promise<Fetc
         id?: string
         snippet?: { title?: string; thumbnails?: Record<string, { url?: string }> }
         contentDetails?: { duration?: string }
+        status?: { embeddable?: boolean }
       }>
     }
     for (const video of videoData.items ?? []) {
@@ -182,6 +185,8 @@ export async function fetchPlaylistFromYouTube(playlistId: string): Promise<Fetc
         title: video.snippet?.title ?? "Untitled video",
         durationSeconds,
         thumbnailUrl: bestThumbnail(video.snippet?.thumbnails),
+        // A missing status must never mark a video unembeddable.
+        isEmbeddable: video.status?.embeddable !== false,
       })
     }
   }
@@ -200,6 +205,7 @@ export async function fetchPlaylistFromYouTube(playlistId: string): Promise<Fetc
       durationSeconds: meta.durationSeconds,
       thumbnailUrl: meta.thumbnailUrl,
       position: videos.length, // re-packed positions skip unavailable items
+      isEmbeddable: meta.isEmbeddable,
     })
   }
 

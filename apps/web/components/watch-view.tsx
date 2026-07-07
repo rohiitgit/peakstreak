@@ -4,10 +4,10 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AnimatePresence, motion } from "motion/react"
-import { ArrowLeft, Check, CheckCircle2, Circle, ListVideo } from "lucide-react"
+import { ArrowLeft, Check, CheckCircle2, Circle, ExternalLink, ListVideo } from "lucide-react"
 import { toast } from "sonner"
 
-import { Button } from "@workspace/ui/components/button"
+import { Button, buttonVariants } from "@workspace/ui/components/button"
 import { cn } from "@workspace/ui/lib/utils"
 
 import { NotesPanel } from "@/components/notes-panel"
@@ -58,6 +58,8 @@ export interface WatchVideo {
   youtubeVideoId: string
   title: string
   durationSeconds: number
+  thumbnailUrl: string | null
+  isEmbeddable: boolean
   position: number
   isCompleted: boolean
   secondsWatched: number
@@ -114,6 +116,19 @@ export function WatchView({
   useEffect(() => {
     completedRef.current = isCompleted
   }, [isCompleted])
+
+  // ── YouTube-only fallback (owner disabled embedding) ──
+  // The youtubeVideoId that failed with onError 101/150 this session —
+  // storing the id (not a boolean) makes reset-on-video-change derived.
+  const [failedEmbedId, setFailedEmbedId] = useState<string | null>(null)
+  const fallbackMode = !current.isEmbeddable || failedEmbedId === current.youtubeVideoId
+
+  const [popupState, setPopupState] = useState<"idle" | "tracking" | "confirm" | "blocked">("idle")
+  const [popupElapsed, setPopupElapsed] = useState(0)
+  const popupRef = useRef<Window | null>(null)
+  const popupStartPosRef = useRef(0)
+  // Mirror of watchedSeconds for the popup tick's duration guard.
+  const watchedRef = useRef(initialSecondsWatched)
 
   // Where the player should begin. Resume from the furthest watched point
   // (minus a short rewind), unless the video is already done or they were
@@ -177,6 +192,7 @@ export function WatchView({
             playlistCompleted: boolean
           }
           setWatchedSeconds(data.secondsWatched)
+          watchedRef.current = data.secondsWatched
           if (data.autoCompleted && !completedRef.current) markCompleted(data)
         }
       } catch {
@@ -190,65 +206,148 @@ export function WatchView({
   // Player lifecycle + the watch-time ticker. Wall-clock accumulation
   // while PLAYING (scaled by playback rate) is what makes the counter
   // seek-robust: skipping ahead moves the playhead, not the clock.
+  // In fallback mode no player is mounted — the popup tracker effect
+  // below feeds the same pendingRef/sendHeartbeat pipeline instead.
   useEffect(() => {
     let cancelled = false
     let tickTimer: ReturnType<typeof setInterval> | undefined
     let sinceFlush = 0
 
-    void loadIframeApi().then(() => {
-      if (cancelled || !containerRef.current || !window.YT) return
-      playerRef.current = new window.YT.Player(containerRef.current, {
-        videoId: current.youtubeVideoId,
-        // `start` makes YouTube seek to the resume point as it loads.
-        playerVars: { rel: 0, start: startAtSeconds },
-        events: {
-          onStateChange: (event: { data: number }) => {
-            if (event.data === window.YT!.PlayerState.PAUSED || event.data === window.YT!.PlayerState.ENDED) {
-              void sendHeartbeat()
-            }
+    if (!fallbackMode) {
+      void loadIframeApi().then(() => {
+        if (cancelled || !containerRef.current || !window.YT) return
+        playerRef.current = new window.YT.Player(containerRef.current, {
+          videoId: current.youtubeVideoId,
+          // `start` makes YouTube seek to the resume point as it loads.
+          playerVars: { rel: 0, start: startAtSeconds },
+          events: {
+            onStateChange: (event: { data: number }) => {
+              if (event.data === window.YT!.PlayerState.PAUSED || event.data === window.YT!.PlayerState.ENDED) {
+                void sendHeartbeat()
+              }
+            },
+            // 101/150 = owner disabled embedding. Switch to the YouTube
+            // fallback and persist the flag (self-heals on the next sync).
+            // Other codes are transient — never degrade the video for them.
+            onError: (event: { data: number }) => {
+              if (event.data !== 101 && event.data !== 150) return
+              setFailedEmbedId(current.youtubeVideoId)
+              void fetch(`/api/videos/${currentVideoId}/embed-error`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ enrollmentId }),
+              }).catch(() => {})
+            },
           },
-        },
-      })
-
-      if (startAtSeconds > 0) {
-        toast(`Resumed where you left off · ${clockLabel(startAtSeconds)}`, {
-          description: "Skip back to the start any time.",
         })
-      }
 
-      tickTimer = setInterval(() => {
-        const player = playerRef.current
-        if (!player || typeof player.getPlayerState !== "function") return
-        if (player.getPlayerState() !== window.YT!.PlayerState.PLAYING) return
-
-        const rate = player.getPlaybackRate?.() || 1
-        pendingRef.current += 1 * rate
-        furthestRef.current = Math.max(furthestRef.current, player.getCurrentTime())
-        sinceFlush += 1
-
-        if (sinceFlush >= HEARTBEAT_INTERVAL_S) {
-          sinceFlush = 0
-          void sendHeartbeat()
+        if (startAtSeconds > 0) {
+          toast(`Resumed where you left off · ${clockLabel(startAtSeconds)}`, {
+            description: "Skip back to the start any time.",
+          })
         }
-      }, 1000)
-    })
+
+        tickTimer = setInterval(() => {
+          const player = playerRef.current
+          if (!player || typeof player.getPlayerState !== "function") return
+          if (player.getPlayerState() !== window.YT!.PlayerState.PLAYING) return
+
+          const rate = player.getPlaybackRate?.() || 1
+          pendingRef.current += 1 * rate
+          furthestRef.current = Math.max(furthestRef.current, player.getCurrentTime())
+          sinceFlush += 1
+
+          if (sinceFlush >= HEARTBEAT_INTERVAL_S) {
+            sinceFlush = 0
+            void sendHeartbeat()
+          }
+        }, 1000)
+      })
+    }
 
     const onHide = () => {
       if (document.visibilityState === "hidden") void sendHeartbeat(true)
     }
+    const onPageHide = () => void sendHeartbeat(true)
     document.addEventListener("visibilitychange", onHide)
-    window.addEventListener("pagehide", () => void sendHeartbeat(true))
+    window.addEventListener("pagehide", onPageHide)
 
     return () => {
       cancelled = true
       if (tickTimer) clearInterval(tickTimer)
       document.removeEventListener("visibilitychange", onHide)
+      window.removeEventListener("pagehide", onPageHide)
       void sendHeartbeat(true)
       playerRef.current?.destroy()
       playerRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current.youtubeVideoId])
+  }, [current.youtubeVideoId, fallbackMode])
+
+  // Reset popup tracking when navigating to another video. The popup (if
+  // any) stays open — it's the user's window — we just stop counting it.
+  useEffect(() => {
+    setPopupState("idle")
+    setPopupElapsed(0)
+    popupRef.current = null
+    watchedRef.current = initialSecondsWatched
+  }, [currentVideoId, initialSecondsWatched])
+
+  // Popup tracker: while the YouTube window is open, wall-clock seconds
+  // feed the same heartbeat pipeline as the embedded player (we can't see
+  // YouTube's playhead or rate cross-origin — popup.closed is all we read).
+  useEffect(() => {
+    if (popupState !== "tracking") return
+    let sinceFlush = 0
+    let elapsed = 0
+    const timer = setInterval(() => {
+      const popup = popupRef.current
+      if (!popup || popup.closed) {
+        popupRef.current = null
+        void sendHeartbeat()
+        setPopupState(completedRef.current ? "idle" : "confirm")
+        return
+      }
+      elapsed += 1
+      setPopupElapsed(elapsed)
+      // Never accrue past the video's length — wall-clock is an estimate,
+      // and daily-activity seconds are not clamped server-side.
+      if (watchedRef.current + pendingRef.current < current.durationSeconds) {
+        pendingRef.current += 1
+      }
+      furthestRef.current = Math.min(
+        current.durationSeconds,
+        Math.max(furthestRef.current, popupStartPosRef.current + elapsed),
+      )
+      sinceFlush += 1
+      if (sinceFlush >= HEARTBEAT_INTERVAL_S) {
+        sinceFlush = 0
+        void sendHeartbeat()
+      }
+    }, 1000)
+    return () => {
+      clearInterval(timer)
+      void sendHeartbeat(true)
+    }
+  }, [popupState, current.durationSeconds, sendHeartbeat])
+
+  const youtubeWatchUrl =
+    `https://www.youtube.com/watch?v=${current.youtubeVideoId}` +
+    (startAtSeconds > 0 ? `&t=${startAtSeconds}s` : "")
+
+  function openOnYouTube() {
+    // No "noopener" feature here — it would force a null return and kill
+    // close-detection. We only ever read popup.closed.
+    const popup = window.open(youtubeWatchUrl, "_blank")
+    if (!popup) {
+      setPopupState("blocked")
+      return
+    }
+    popupRef.current = popup
+    popupStartPosRef.current = startAtSeconds
+    setPopupElapsed(0)
+    setPopupState("tracking")
+  }
 
   async function toggleComplete() {
     setBusy(true)
@@ -312,6 +411,90 @@ export function WatchView({
 
         <div className="border-border relative aspect-video w-full overflow-hidden rounded-xl border bg-black">
           <div ref={containerRef} className="size-full" />
+          {fallbackMode && (
+            <div className="absolute inset-0 z-[5]">
+              {current.thumbnailUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={current.thumbnailUrl}
+                  alt=""
+                  className="absolute inset-0 size-full object-cover opacity-30"
+                />
+              )}
+              <div className="relative flex size-full flex-col items-center justify-center gap-4 px-6 text-center">
+                {popupState === "idle" && (
+                  <>
+                    <p className="text-lg font-semibold text-white">
+                      This video&apos;s owner only allows playback on YouTube
+                    </p>
+                    <p className="text-sm text-white/70">
+                      Time you spend watching there still counts here.
+                    </p>
+                    <Button onClick={openOnYouTube}>
+                      <ExternalLink className="size-4" />
+                      {startAtSeconds > 0
+                        ? `Resume on YouTube · ${clockLabel(startAtSeconds)}`
+                        : "Watch on YouTube"}
+                    </Button>
+                  </>
+                )}
+                {popupState === "tracking" && (
+                  <>
+                    <p className="text-lg font-semibold text-white">
+                      Watching on YouTube · tracking your time
+                    </p>
+                    <p className="font-mono text-3xl text-white">{clockLabel(popupElapsed)}</p>
+                    <p className="text-sm text-white/70">
+                      Close the YouTube window when you&apos;re done.
+                    </p>
+                  </>
+                )}
+                {popupState === "confirm" && (
+                  <>
+                    <p className="text-lg font-semibold text-white">
+                      Watched {formatDuration(watchedSeconds)} of{" "}
+                      {formatDuration(current.durationSeconds)}
+                    </p>
+                    <p className="text-sm text-white/70">Done for now, or finished the video?</p>
+                    <div className="flex gap-3">
+                      <Button
+                        disabled={busy}
+                        onClick={() => {
+                          void toggleComplete()
+                          setPopupState("idle")
+                        }}
+                      >
+                        <Check className="size-4" />
+                        Mark complete
+                      </Button>
+                      <Button variant="outline" onClick={() => setPopupState("idle")}>
+                        Not yet
+                      </Button>
+                    </div>
+                  </>
+                )}
+                {popupState === "blocked" && (
+                  <>
+                    <p className="text-lg font-semibold text-white">
+                      Your browser blocked the popup
+                    </p>
+                    <p className="text-sm text-white/70">
+                      Open the video on YouTube, then come back and mark it complete.
+                    </p>
+                    <a
+                      href={youtubeWatchUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={buttonVariants()}
+                    >
+                      <ExternalLink className="size-4" />
+                      Open on YouTube
+                    </a>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
           <AnimatePresence>
             {showCelebration && (
               <motion.div
@@ -410,8 +593,12 @@ export function WatchView({
           key={currentVideoId}
           videoId={currentVideoId}
           enrollmentId={enrollmentId}
-          getPlayerTime={() => playerRef.current?.getCurrentTime() ?? null}
-          onSeek={(seconds) => playerRef.current?.seekTo(seconds, true)}
+          // No player in fallback mode — omit the hooks and NotesPanel
+          // degrades to plain untimed notes.
+          getPlayerTime={
+            fallbackMode ? undefined : () => playerRef.current?.getCurrentTime() ?? null
+          }
+          onSeek={fallbackMode ? undefined : (seconds) => playerRef.current?.seekTo(seconds, true)}
         />
       </div>
 

@@ -71,6 +71,7 @@ export async function getOrSyncPlaylist(youtubePlaylistId: string): Promise<Cach
 
   const playlist = await db.transaction(async (tx) => {
     const totalDurationSeconds = fetched.videos.reduce((sum, v) => sum + v.durationSeconds, 0)
+    const unembeddableCount = fetched.videos.filter((v) => !v.isEmbeddable).length
     const [playlistRow] = await tx
       .insert(schema.playlists)
       .values({
@@ -81,6 +82,7 @@ export async function getOrSyncPlaylist(youtubePlaylistId: string): Promise<Cach
         videoCount: fetched.videos.length,
         totalDurationSeconds,
         unavailableCount: fetched.unavailableCount,
+        unembeddableCount,
         lastSyncedAt: new Date(),
         syncStatus: fetched.unavailableCount > 0 ? "partial" : "ok",
       })
@@ -93,6 +95,7 @@ export async function getOrSyncPlaylist(youtubePlaylistId: string): Promise<Cach
           videoCount: fetched.videos.length,
           totalDurationSeconds,
           unavailableCount: fetched.unavailableCount,
+          unembeddableCount,
           lastSyncedAt: new Date(),
           syncStatus: fetched.unavailableCount > 0 ? "partial" : "ok",
           updatedAt: new Date(),
@@ -109,6 +112,7 @@ export async function getOrSyncPlaylist(youtubePlaylistId: string): Promise<Cach
             title: v.title,
             durationSeconds: v.durationSeconds,
             thumbnailUrl: v.thumbnailUrl,
+            isEmbeddable: v.isEmbeddable,
           })),
         )
         .onConflictDoUpdate({
@@ -118,6 +122,9 @@ export async function getOrSyncPlaylist(youtubePlaylistId: string): Promise<Cach
             durationSeconds: sql`excluded.duration_seconds`,
             thumbnailUrl: sql`excluded.thumbnail_url`,
             isAvailable: sql`true`,
+            // Two-way self-heal: a runtime-flagged false flips back to true
+            // here if the owner re-enables embedding.
+            isEmbeddable: sql`excluded.is_embeddable`,
             updatedAt: sql`now()`,
           },
         })

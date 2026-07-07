@@ -35,6 +35,7 @@ interface PreviewPlaylist {
   videoCount: number
   totalDurationSeconds: number
   unavailableCount: number
+  unembeddableCount: number
 }
 
 const PACE_PRESETS: Array<{ label: string; pace: Pace }> = [
@@ -207,6 +208,16 @@ export function AddPlaylistFlow({ initialUrl }: { initialUrl?: string }) {
                   <TriangleAlert className="size-3.5" />
                   {preview.unavailableCount} video{preview.unavailableCount > 1 ? "s" : ""}{" "}
                   unavailable — excluded from the plan
+                </p>
+              )}
+              {preview.unembeddableCount > 0 && (
+                <p className="text-muted-foreground mt-1.5 flex items-start gap-1.5 text-xs">
+                  <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+                  <span>
+                    {preview.unembeddableCount} of {preview.videoCount} videos open on YouTube —
+                    owner disabled playback on other sites. Your progress, streaks and completions
+                    still work here.
+                  </span>
                 </p>
               )}
             </div>

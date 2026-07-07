@@ -70,6 +70,7 @@ export async function POST(request: Request) {
         videoCount: playlist.videoCount,
         totalDurationSeconds: playlist.totalDurationSeconds,
         unavailableCount: playlist.unavailableCount,
+        unembeddableCount: playlist.unembeddableCount,
       },
       fromCache,
     })
